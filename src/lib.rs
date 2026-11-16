@@ -98,6 +98,30 @@ impl WorkspaceProfile {
     pub fn add_window(&mut self, w: ManagedWindow) {
         self.windows.push(w);
     }
+
+    /// Convenience constructor: build and push a `ManagedWindow` in one call.
+    pub fn add_window_at(
+        &mut self,
+        rect: WindowRect,
+        app_id: impl Into<String>,
+        title_hint: Option<String>,
+        workspace: Option<u32>,
+    ) {
+        self.windows.push(ManagedWindow { app_id: app_id.into(), title_hint, rect, workspace });
+    }
+
+    /// Sorted, unique workspace ids referenced by this profile's windows.
+    pub fn workspace_ids(&self) -> Vec<u32> {
+        let mut ids: Vec<u32> = self.windows.iter().filter_map(|w| w.workspace).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
+}
+
+/// Borrowed views of the windows assigned to workspace `ws`, in profile order.
+pub fn windows_in_workspace<'a>(profile: &'a WorkspaceProfile, ws: u32) -> Vec<&'a ManagedWindow> {
+    profile.windows.iter().filter(|w| w.workspace == Some(ws)).collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,6 +288,37 @@ mod tests {
         let warnings = validate_profile(&p, &[display()]);
         let overlaps: Vec<_> = warnings.iter().filter(|w| matches!(w, ValidationWarning::Overlapping { .. })).collect();
         assert_eq!(overlaps.len(), 1);
+    }
+
+    #[test]
+    fn windows_in_workspace_filters() {
+        let p = sample_profile();
+        let ws1 = windows_in_workspace(&p, 1);
+        assert_eq!(ws1.len(), 2);
+        assert!(windows_in_workspace(&p, 2).is_empty());
+        assert!(windows_in_workspace(&p, 99).is_empty());
+    }
+
+    #[test]
+    fn workspace_ids_sorted_unique() {
+        let mut p = WorkspaceProfile::new("Multi").unwrap();
+        assert!(p.workspace_ids().is_empty());
+        p.add_window_at(WindowRect::new(0, 0, 100, 100), "a", None, Some(3));
+        p.add_window_at(WindowRect::new(0, 0, 100, 100), "b", Some("hint".into()), Some(1));
+        p.add_window_at(WindowRect::new(0, 0, 100, 100), "c", None, Some(3));
+        p.add_window_at(WindowRect::new(0, 0, 100, 100), "d", None, None); // no workspace — excluded
+        assert_eq!(p.workspace_ids(), vec![1, 3]);
+    }
+
+    #[test]
+    fn add_window_at_sets_fields() {
+        let mut p = WorkspaceProfile::new("Added").unwrap();
+        p.add_window_at(WindowRect::new(10, 20, 300, 200), "term.desktop", Some("Shell".into()), Some(7));
+        let w = &p.windows[0];
+        assert_eq!(w.app_id, "term.desktop");
+        assert_eq!(w.title_hint.as_deref(), Some("Shell"));
+        assert_eq!(w.workspace, Some(7));
+        assert_eq!(w.rect, WindowRect::new(10, 20, 300, 200));
     }
 
     #[test]
